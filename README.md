@@ -2,9 +2,6 @@
 
 The repository contains all scripts needed to reproduce the results reported in the above study.
 
-# Data
-
-The data are available on
 
 # Code
 

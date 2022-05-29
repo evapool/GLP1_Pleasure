@@ -5,15 +5,13 @@
 #              in patients with obesity? A randomized controlled trial                             #
 #                                                                                                  #
 #                                                                                                  #
-#                   Geraldine Coppin                                                               #
 #                   David Munoz Tord                                                               #
 #                   Eva R Pool                                                                     #
-#                   Amal Achaibou                                                                  #
 # 
 
 #                                        
 # created  by D.M.T                                                                                #
-# modified by E.R.P 
+# modified by E.R.P based on B.M advice
 
 
 
@@ -320,14 +318,21 @@ hist(residuals(fmod_weight))
 #---------------------------------------------------- run baysian stat
 niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
 
-bmod_weight = brm(mf, data=df.weight, family = gaussian, 
-                  prior = c(prior(normal(0, 3), class = "b", coef = ""), 
-                            prior(normal(0, 100), class = "Intercept", coef = "")), 
-                  sample_prior = T, save_pars = save_pars(all = TRUE), chains = chains,
-                  iter = niter, warmup = warm, seed = 123, inits = 1, backend = 'cmdstanr',
-                  threads = threading(4), control = list(adapt_delta = 0.99)) 
+df.weight$gender <- ifelse(df.weight$gender==0,-1,df.weight$gender)  #SUM-CODING HERE!
+df.weight$intervention <- ifelse(df.weight$intervention==0,-1,df.weight$intervention)  #SUM-CODING HERE!
 
-# 1) Generic informative prior around 0 for fixed effects and weak prior for the intercept 
+
+
+bmod_weight = brm(BMI_diff ~ intervention + gender + age, data=df.weight, family = gaussian, 
+                  prior = c(prior(normal(0,1), class = "b")), 
+                  sample_prior=TRUE, chains=4,
+                  iter=niter, warmup=1000, seed=123, backend="cmdstanr",
+                  control = list(adapt_delta = 0.99))
+bmod_weight
+
+
+
+# 1) Generic informative prior around 0 for fixed effects 
 # 2) we need to sample priors and save parameters for computing BF 
 # 3) larger step size 
 
@@ -421,17 +426,16 @@ mf = formula(perceived_liking_z ~ condition*session*intervention*saturation + (c
 
 #---------------------------------------------------- run frequenstistic stat
 fmod_like = lmer(mf, data = HED.trial, control = my_control)
-
-anova(fmod_like)
-
+anova(fmod_like,type=2)
 summary(fmod_like)
-
 confint(fmod_like, level = 0.95, method = "Wald") 
 
 # ----- visualize assumptions check
 plot(fitted(fmod_like),residuals(fmod_like)) 
 qqnorm(residuals(fmod_like))
 hist(residuals(fmod_like))
+simulateResiduals(fittedModel=fmod_like, n=1000, plot=TRUE)
+plot(density(HED.trial$perceived_liking))
 
 
 #---------------------------------------------------- run baysian stat
@@ -439,25 +443,22 @@ niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000
 
 my_stanvars <- stanvar(scode = stan_funs, block = "functions")
 
-bmod_like = brm(bf(mf, hu ~ 1), 
+bmod_like = brm(bf(perceived_liking_z ~ condition*session*intervention*scale(saturation) + (condition*session*scale(saturation)|id), hu~1),
                 family = hurdle_gaussian, 
                 stanvars = stanvars, 
                 data=HED.trial, 
-                prior =  c(prior(normal(0, 3), class = "b", coef = ""), 
-                           prior(normal(0, 100), class = "Intercept", coef = ""),
-                           prior(logistic(0, 0.5), class = "Intercept", dpar = "hu")), 
-                sample_prior = T, save_pars = save_pars(all = TRUE), 
-                chains = chains,  
-                iter = niter, 
-                warmup = warm, 
+                prior =  c(prior(normal(0,1), class="b", coef=""),prior(student_t(3,0,5), class="sd")),
+                sample_prior=TRUE, 
+                chains = 4,  
+                iter = 2000, 
+                warmup = 500, 
                 seed = 123, 
-                inits = 1, 
-                backend = 'cmdstan', 
-                threads = threading(4), control = list(adapt_delta = 0.99)) 
+                backend = "cmdstan", 
+                control = list(adapt_delta = 0.99)) 
 
 
-#1)  custom gaussian hurdle cause zero-inflated continous data 
-#2) Generic weakly informative prior around 0 for fixed effects and very weak prior for the intercept 
+#1) Custom gaussian hurdle because of value inflation at scale = 50 (neutral value selected by default on control solution)
+#2) Generic weakly informative prior around 0 for fixed effects 
 #3) we need to sample priors and save parameters for computing BF #this one is a big longer, so seat tight 
 #4) increased step size
 
@@ -481,16 +482,16 @@ trace = mcmc_plot(object = bmod_like, pars =c("b_.*en", "b_.*ge"), type ="trace"
 
 
 # ----- visualize assumptions check
-#var_group = pp_check(bmod_like, type = "stat_grouped", group = "intervention", binwidth = 0.1, nsamples = NULL) #equality of variance between groups
-#rep_fit   = pp_check(bmod_like, nsamples = 100) # check response fit
-#error     = pp_check(bmod_like, type ="error_scatter_avg", nsamples = NULL) # check good alignment between model and data, and no obvious pattern to the types of errors we are getting.
+var_group = pp_check(bmod_like, type = "stat_grouped", group = "intervention", binwidth = 0.1, nsamples = NULL) #equality of variance between groups
+rep_fit   = pp_check(bmod_like, nsamples = 100) # check response fit
+error     = pp_check(bmod_like, type ="error_scatter_avg", nsamples = NULL) # check good alignment between model and data, and no obvious pattern to the types of errors we are getting.
 
-#diagLIKE <- ggarrange(param, var_group, rep_fit, error, ncol = 2, nrow = 2)
+diagLIKE <- ggarrange(param, var_group, rep_fit, error, ncol = 2, nrow = 2)
 
 # save plot
-#pdf(file.path(figures_path,'BLMX_LIKE_checks.pdf'))
-#print(diagWEIGHT)
-#dev.off()
+pdf(file.path(figures_path,'BLMX_LIKE_checks.pdf'))
+print(diagLIKE)
+dev.off()
 
 
 # ------------------------------------------------- PLOT 1 ---------------------------------------------------------------------------------

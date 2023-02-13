@@ -56,7 +56,7 @@ home_path <- getwd()
 setwd(home_path)
 
 
-set_cmdstan_path(path = '/anaconda2/envs/stan-env/bin/cmdstan/')
+set_cmdstan_path(path = '/opt/anaconda3/envs/stan/bin/cmdstan')
 
 # set working directory for outputs
 analysis_path <- dirname(getActiveDocumentContext()$path)
@@ -472,21 +472,14 @@ full_tab_like = describe_posterior(bmod_like, estimate = "median", dispersion = 
 
 # bayesian interpretation of the results (for intervetion)
 report = capture.output(sexit(bmod_like, ci=.9))
-report[4]
+report[15]
 
 
 # visulize posterior and chain sampling
-param = mcmc_plot(object = bmod_like, pars =c("b_.*en", "b_.*ge"), type ="areas")
-trace = mcmc_plot(object = bmod_like, pars =c("b_.*en", "b_.*ge"), type ="trace")
+param = mcmc_plot(object = bmod_like, pars =c("b_.*en"), type ="areas")
+trace = mcmc_plot(object = bmod_like, pars =c("b_.*en"), type ="trace")
 
-
-
-# ----- visualize assumptions check
-var_group = pp_check(bmod_like, type = "stat_grouped", group = "intervention", binwidth = 0.1, nsamples = NULL) #equality of variance between groups
-rep_fit   = pp_check(bmod_like, nsamples = 100) # check response fit
-error     = pp_check(bmod_like, type ="error_scatter_avg", nsamples = NULL) # check good alignment between model and data, and no obvious pattern to the types of errors we are getting.
-
-diagLIKE <- ggarrange(param, var_group, rep_fit, error, ncol = 2, nrow = 2)
+diagLIKE <- ggarrange(param, trace, ncol = 2, nrow = 1)
 
 # save plot
 pdf(file.path(figures_path,'BLMX_LIKE_checks.pdf'))
@@ -515,7 +508,7 @@ p_behav_time <- ggplot(HED.p , aes(x = as.numeric(trialxcondition), y = perceive
   geom_line(alpha = .7, size = 1, show.legend = T) +
   geom_ribbon(aes(ymax = perceived_liking + se, ymin = perceived_liking - se, fill = condition, color =NA),color = NA,  alpha=0.4) + 
   geom_point() +
-  ylab('Pleasantness')+
+  ylab('Liking')+
   xlab('Trial') +
   scale_y_continuous(expand = c(0, 0), breaks = c(seq.int(0,100, by = 10)), limits = c(0,100)) +
   scale_fill_manual(values=c("Neutral"= pal[1], "MilkShake"=pal[4]), guide = 'none') +
@@ -551,7 +544,7 @@ p_behav_individual = ggplot(HED.means, aes(x = condition, y = perceived_liking, 
   geom_flat_violin(scale = "count", trim = FALSE, alpha = .1, aes(fill = condition, color = NA), color = NA) +
   geom_point(aes(group = id, y = perceived_liking), alpha = .4, position = position_dodge(0.2), size = 0.5) +
   geom_crossbar(data = HED.pp, aes(y = perceived_liking, ymin=perceived_liking-se, ymax=perceived_liking+se), width = 0.5 , alpha = 0.1) +
-  ylab('Pleasantness') +
+  ylab('Liking') +
   xlab('Taste Stimulus') +
   scale_y_continuous(expand = c(0, 0), breaks = c(seq.int(0,100, by = 10)), limits = c(0,100)) +
   scale_fill_manual(values=c("Neutral"= pal[1], "MilkShake"=pal[4]), guide = 'none') +
@@ -565,6 +558,206 @@ pdf(file.path(figures_path,'Figure_Behav_average.pdf'))
 print(p_behav_individual)
 dev.off()
 
+
+
+
+# -------------------------------------------------------------------------------------------------------
+#                           REVISIONS
+# --------------------------------------------------------------------------------------------------------
+
+
+#  ------------------------- REVIEWER REQUEST 1 --------------------------------
+# Run a post-hoc power analysis - this is not ideal because post-hoc powver analysis are
+# basically another way to report p-value. What we can do is a sensitivity analysis explaning
+# how likely it was to observe a significant effect, given your sample, and given an expected effect size 
+# (see Lakens 2022, Sample Size Justification, PsyArix)
+# The point is an important one and we can address with more baysian modeling on the effect of interest
+
+
+niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
+
+my_stanvars <- stanvar(scode = stan_funs, block = "functions")
+
+bmod_like = brm(bf(perceived_liking_z ~ condition*session*intervention + (condition*session|id), hu~1),
+                family = hurdle_gaussian, 
+                stanvars = stanvars, 
+                data=HED.trial, 
+                prior =  c(prior(normal(0,1), class="b", coef=""),prior(student_t(3,0,5), class="sd")),
+                sample_prior=TRUE, 
+                chains = 4,  
+                iter = 2000, 
+                warmup = 500, 
+                seed = 123, 
+                backend = "cmdstan", 
+                control = list(adapt_delta = 0.99)) 
+
+
+full_tab_like_simple = describe_posterior(bmod_like_simple, estimate = "median", dispersion = T,
+                                          ci = .9, ci_method = "hdi",
+                                          bf_prior = bmod_like_simple, diagnostic = "Rhat",
+                                          test = c("p_direction", "bf"))
+
+param = mcmc_plot(object = bmod_like_simple, pars =c("b_condition1:session1:intervention1*"), type ="areas")
+
+
+#  ------------------------- REVIEWER REQUEST 2 --------------------------------
+
+# a plot of intervention by session 
+
+# create averaged databases
+HED.means_request1 <- aggregate(ALL$perceived_liking, by = list(ALL$id, ALL$session, ALL$intervention), FUN='mean', na.rm = T) # extract means
+colnames(HED.means_request1) <- c('id','session', 'intervention','perceived_liking')
+HED.means_request1$session <- dplyr::recode(HED.means_request1$session, "third" = "Post", "second" = "Pre" )
+
+
+HED.pp_request1 <- summarySEwithin(HED.means_request1,
+                          measurevar = c("perceived_liking"),
+                          withinvars = c("session"),
+                          betweenvars = "intervention",
+                          idvar = "id")
+
+
+
+p_behav_request1 = ggplot(HED.means_request1, aes(x = session, y = perceived_liking, fill = session, color = session)) +
+  facet_grid(~intervention) +
+  geom_abline(slope=0, intercept=50, linetype = "dashed", color = "black") +
+  geom_line (aes(group = id, y = perceived_liking), alpha = .2, position = position_dodge(0.2), color = "gray") +
+  geom_flat_violin(scale = "count", trim = FALSE, alpha = .1, aes(fill = session, color = NA), color = NA) +
+  geom_point(aes(group = id, y = perceived_liking), alpha = .4, position = position_dodge(0.2), size = 0.5) +
+  geom_crossbar(data = HED.pp_request1, aes(y = perceived_liking, ymin=perceived_liking-se, ymax=perceived_liking+se), width = 0.5 , alpha = 0.1) +
+  ylab('Pleasantness') +
+  xlab('Taste Stimulus') +
+  scale_y_continuous(expand = c(0, 0), breaks = c(seq.int(0,100, by = 10)), limits = c(0,100)) +
+  scale_fill_manual(values=c("Pre"= pal[1], "Post"=pal[4]), guide = 'none') +
+  scale_color_manual(values=c("Pre"=pal[1], "Post"=pal[4]), guide = 'none') +
+  theme_bw()
+
+p_behav_request1 = p_behav_request1 + timeline_theme
+
+# save plot
+pdf(file.path(figures_path,'Plot_Revisions.pdf'))
+print(p_behav_request1)
+dev.off()
+
+
+
+
+
+#  ------------------------- REVIEWER REQUEST 3 --------------------------------
+# Run an analysis on the Homa-IR  rather than BMI
+
+
+
+# ---------------------------------------------------  define database
+df.homair <- aggregate(ALL$HOMA_IR_diff, by = list(ALL$id, ALL$gender, ALL$age, ALL$intervention), FUN='mean', na.rm = T) # extract means
+colnames(df.homair) <- c('id','gender','age', 'intervention','HOMA_IR_diff')
+
+
+#---------------------------------------------------- define statstical Model
+mf = formula(HOMA_IR_diff ~ intervention + gender + age  + (1|id))
+
+#---------------------------------------------------- run frequenstistic stat
+fmod_homair = lm(update(mf, ~.- (1|id)) , data = df.homair)
+
+anova(fmod_homair)
+
+summary(fmod_homair)
+
+confint(fmod_homair, level = 0.95, method = "Wald") 
+
+# ----- visualize assumptions check
+plot(fitted(fmod_homair),residuals(fmod_homair)) 
+qqnorm(residuals(fmod_homair))
+hist(residuals(fmod_homair))
+
+#---------------------------------------------------- run baysian stat
+niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
+
+df.homair$gender <- ifelse(df.homair$gender==0,-1,df.homair$gender)  #SUM-CODING HERE!
+df.homair$intervention <- ifelse(df.homair$intervention==0,-1,df.homair$intervention)  #SUM-CODING HERE!
+
+
+
+bmod_homair = brm(HOMA_IR_diff ~ intervention + gender + age, data=df.homair, family = gaussian, 
+                  prior = c(prior(normal(0,1), class = "b")), 
+                  sample_prior=TRUE, chains=4,
+                  iter=niter, warmup=1000, seed=123, backend="cmdstanr",
+                  control = list(adapt_delta = 0.99))
+
+
+
+
+# 1) Generic informative prior around 0 for fixed effects 
+# 2) we need to sample priors and save parameters for computing BF 
+# 3) larger step size 
+
+# save model so that we do not have to run it evertime
+#save (bmod_weight, file = file.path(analysis_path, 'Bmod_weight.R'))
+
+
+
+# extract BF
+full_tab_homair = describe_posterior(bmod_homair, estimate = "median", 
+                                     dispersion = T, ci = .9, ci_method = "hdi", 
+                                     bf_prior = bmod_homair, diagnostic = "Rhat",  
+                                     test = c("p_direction", "bf"))
+
+# bayesian interpretation of the results (for intervetion)
+report = capture.output(sexit(bmod_homair, ci=.9))
+report[4]
+
+
+# visulize posterior and chain sampling
+param = mcmc_plot(object = bmod_homair, pars =c("b_.*en", "b_.*ge"), type ="areas")
+trace = mcmc_plot(object = bmod_homair, pars =c("b_.*en", "b_.*ge"), type ="trace")
+
+
+# ----- visualize assumptions check
+var_group = pp_check(bmod_homair, type = "stat_grouped", group = "intervention", binwidth = 0.1, nsamples = NULL) #equality of variance between groups
+rep_fit   = pp_check(bmod_homair, nsamples = 100) # check response fit
+error     = pp_check(bmod_homair, type ="error_scatter_avg", nsamples = NULL) # check good alignment between model and data, and no obvious pattern to the types of errors we are getting.
+
+diagHOMA_IR <- ggarrange(param, var_group, rep_fit, error, ncol = 2, nrow = 2)
+
+# save plot
+pdf(file.path(figures_path,'BLMX_HOMA_IR_checks.pdf'))
+print(diagHOMA_IR)
+dev.off()
+
+
+
+# -------------------------- REVIWER REQUEST 4 --------------------------------
+
+# add homa ir in the analysis
+
+HED.trial_request <- aggregate(ALL$perceived_liking, by = list(ALL$id, ALL$trialxcondition, ALL$condition, ALL$session, ALL$intervention, ALL$HOMA_IR_diff), FUN='mean') # extract means
+colnames(HED.trial_request) <- c('id',"trialxcondition",'condition',"session","intervention","homa_ir","perceived_liking")
+
+HED.aov     <- aov_car(perceived_liking ~ trialxcondition + Error (id/trialxcondition), data = HED.trial_request, anova_table = list(correction = "GG", es = "pes"))
+HED.emm    <- emmeans(HED.aov, ~ trialxcondition , model = "multivariate")
+HED.linear  <- contrast(HED.emm, "poly") # look only at the linear constrast here
+coef(HED.linear)
+
+HED.trial_request$saturation = scales::rescale(as.numeric(HED.trial_request$trialxcondition), to = c(19,-19))
+HED.trial_request$perceived_liking_z = scale(HED.trial_request$perceived_liking) # so that the prior are scaled correctly
+
+#---------------------------------------------------- define statstical Model
+
+mf = formula(perceived_liking_z ~ condition*session*intervention*saturation* homa_ir+ (condition*session*saturation|id))
+
+
+#---------------------------------------------------- run frequenstistic stat
+fmod_like = lmer(mf, data = HED.trial_request, control = my_control)
+anova(fmod_like,type=2)
+summary(fmod_like)
+confint(fmod_like, level = 0.95, method = "Wald") 
+
+# ----- visualize assumptions check
+plot(fitted(fmod_like),residuals(fmod_like)) 
+qqnorm(residuals(fmod_like))
+hist(residuals(fmod_like))
+simulateResiduals(fittedModel=fmod_like, n=1000, plot=TRUE)
+plot(density(HED.trial$perceived_liking))
 
 
 

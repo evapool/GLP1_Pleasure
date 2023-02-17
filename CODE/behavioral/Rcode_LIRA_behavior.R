@@ -296,10 +296,13 @@ dev.off()
 # ---------------------------------------------------  define database
 df.weight <- aggregate(ALL$BMI_diff, by = list(ALL$id, ALL$gender, ALL$age, ALL$intervention), FUN='mean', na.rm = T) # extract means
 colnames(df.weight) <- c('id','gender','age', 'intervention','BMI_diff')
+df.weight$gender <- ifelse(df.weight$gender=="Male",-1,1)  #SUM-CODING HERE!
+df.weight$intervention <- factor(ifelse(df.weight$intervention=="Placebo",-1,1))  #SUM-CODING HERE!
+df.weight$BMI_diff_z <- scale (df.weight$BMI_diff)  #SUM-CODING HERE!
 
 
 #---------------------------------------------------- define statstical Model
-mf = formula(BMI_diff ~ intervention + gender + age  + (1|id))
+mf = formula(BMI_diff_z ~ intervention + gender + age  + (1|id))
 
 #---------------------------------------------------- run frequenstistic stat
 fmod_weight = lm(update(mf, ~.- (1|id)) , data = df.weight)
@@ -316,14 +319,9 @@ qqnorm(residuals(fmod_weight))
 hist(residuals(fmod_weight))
 
 #---------------------------------------------------- run baysian stat
-niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
+niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 40000 
 
-df.weight$gender <- ifelse(df.weight$gender==0,-1,df.weight$gender)  #SUM-CODING HERE!
-df.weight$intervention <- ifelse(df.weight$intervention==0,-1,df.weight$intervention)  #SUM-CODING HERE!
-
-
-
-bmod_weight = brm(BMI_diff ~ intervention + gender + age, data=df.weight, family = gaussian, 
+bmod_weight = brm(BMI_diff_z ~ intervention + gender + age, data=df.weight, family = gaussian, 
                   prior = c(prior(normal(0,1), class = "b")), 
                   sample_prior=TRUE, chains=4,
                   iter=niter, warmup=1000, seed=123, backend="cmdstanr",
@@ -417,10 +415,13 @@ coef(HED.linear)
 
 HED.trial$saturation = scales::rescale(as.numeric(HED.trial$trialxcondition), to = c(19,-19))
 HED.trial$perceived_liking_z = scale(HED.trial$perceived_liking) # so that the prior are scaled correctly
+HED.trial$intervention_sc <- factor(ifelse(HED.trial$intervention=="Placebo",-1,1))  #SUM-CODING HERE!
+HED.trial$condition_sc <- factor(ifelse(HED.trial$condition=="Empty",-1,1))  #SUM-CODING HERE!
+HED.trial$session_sc <- factor(ifelse(HED.trial$session=="second",-1,1))  #SUM-CODING HERE!
+
 
 #---------------------------------------------------- define statstical Model
-
-mf = formula(perceived_liking_z ~ condition*session*intervention*saturation + (condition*session*saturation|id))
+mf = formula(perceived_liking_z ~ condition_sc*session_sc*intervention_sc*saturation + (condition_sc*session_sc*saturation|id))
 
 
 
@@ -443,7 +444,7 @@ niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000
 
 my_stanvars <- stanvar(scode = stan_funs, block = "functions")
 
-bmod_like = brm(bf(perceived_liking_z ~ condition*session*intervention*scale(saturation) + (condition*session*scale(saturation)|id), hu~1),
+bmod_like = brm(bf(perceived_liking_z ~ condition_sc*session_sc*intervention_sc*scale(saturation) + (condition_sc*session_sc*scale(saturation)|id), hu~1),
                 family = hurdle_gaussian, 
                 stanvars = stanvars, 
                 data=HED.trial, 
@@ -472,14 +473,21 @@ full_tab_like = describe_posterior(bmod_like, estimate = "median", dispersion = 
 
 # bayesian interpretation of the results (for intervetion)
 report = capture.output(sexit(bmod_like, ci=.9))
-report[15]
+report[4]
 
 
 # visulize posterior and chain sampling
-param = mcmc_plot(object = bmod_like, pars =c("b_.*en"), type ="areas")
-trace = mcmc_plot(object = bmod_like, pars =c("b_.*en"), type ="trace")
+param = mcmc_plot(object = bmod_like, pars =c("b_.*en", "b_.*ge"), type ="areas")
+trace = mcmc_plot(object = bmod_like, pars =c("b_.*en", "b_.*ge"), type ="trace")
 
-diagLIKE <- ggarrange(param, trace, ncol = 2, nrow = 1)
+
+
+# ----- visualize assumptions check
+var_group = pp_check(bmod_like, type = "stat_grouped", group = "intervention", binwidth = 0.1, nsamples = NULL) #equality of variance between groups
+rep_fit   = pp_check(bmod_like, nsamples = 100) # check response fit
+error     = pp_check(bmod_like, type ="error_scatter_avg", nsamples = NULL) # check good alignment between model and data, and no obvious pattern to the types of errors we are getting.
+
+diagLIKE <- ggarrange(param, var_group, rep_fit, error, ncol = 2, nrow = 2)
 
 # save plot
 pdf(file.path(figures_path,'BLMX_LIKE_checks.pdf'))
@@ -508,7 +516,7 @@ p_behav_time <- ggplot(HED.p , aes(x = as.numeric(trialxcondition), y = perceive
   geom_line(alpha = .7, size = 1, show.legend = T) +
   geom_ribbon(aes(ymax = perceived_liking + se, ymin = perceived_liking - se, fill = condition, color =NA),color = NA,  alpha=0.4) + 
   geom_point() +
-  ylab('Liking')+
+  ylab('Pleasantness')+
   xlab('Trial') +
   scale_y_continuous(expand = c(0, 0), breaks = c(seq.int(0,100, by = 10)), limits = c(0,100)) +
   scale_fill_manual(values=c("Neutral"= pal[1], "MilkShake"=pal[4]), guide = 'none') +
@@ -544,7 +552,7 @@ p_behav_individual = ggplot(HED.means, aes(x = condition, y = perceived_liking, 
   geom_flat_violin(scale = "count", trim = FALSE, alpha = .1, aes(fill = condition, color = NA), color = NA) +
   geom_point(aes(group = id, y = perceived_liking), alpha = .4, position = position_dodge(0.2), size = 0.5) +
   geom_crossbar(data = HED.pp, aes(y = perceived_liking, ymin=perceived_liking-se, ymax=perceived_liking+se), width = 0.5 , alpha = 0.1) +
-  ylab('Liking') +
+  ylab('Pleasantness') +
   xlab('Taste Stimulus') +
   scale_y_continuous(expand = c(0, 0), breaks = c(seq.int(0,100, by = 10)), limits = c(0,100)) +
   scale_fill_manual(values=c("Neutral"= pal[1], "MilkShake"=pal[4]), guide = 'none') +
@@ -571,6 +579,14 @@ dev.off()
 # basically another way to report p-value. What we can do is a sensitivity analysis explaning
 # how likely it was to observe a significant effect, given your sample, and given an expected effect size 
 # (see Lakens 2022, Sample Size Justification, PsyArix)
+
+
+HED.sensitivity     <- aov_car(perceived_liking_z ~ condition*session*intervention*saturation + Error (id/condition*session*saturation), data = HED.trial, anova_table = list(correction = "GG", es = "pes"))
+# sensitivity analysis on anova determines our studies is powered to observe f effect size of 0.22 (which can be described as a medium effect size)
+
+
+
+
 # The point is an important one and we can address with more baysian modeling on the effect of interest
 
 
@@ -578,7 +594,7 @@ niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000
 
 my_stanvars <- stanvar(scode = stan_funs, block = "functions")
 
-bmod_like = brm(bf(perceived_liking_z ~ condition*session*intervention + (condition*session|id), hu~1),
+bmod_like_simple = brm(bf(perceived_liking_z ~ condition*session*intervention + (condition*session|id), hu~1),
                 family = hurdle_gaussian, 
                 stanvars = stanvars, 
                 data=HED.trial, 
@@ -591,13 +607,14 @@ bmod_like = brm(bf(perceived_liking_z ~ condition*session*intervention + (condit
                 backend = "cmdstan", 
                 control = list(adapt_delta = 0.99)) 
 
-
 full_tab_like_simple = describe_posterior(bmod_like_simple, estimate = "median", dispersion = T,
                                           ci = .9, ci_method = "hdi",
                                           bf_prior = bmod_like_simple, diagnostic = "Rhat",
                                           test = c("p_direction", "bf"))
 
 param = mcmc_plot(object = bmod_like_simple, pars =c("b_condition1:session1:intervention1*"), type ="areas")
+
+
 
 
 #  ------------------------- REVIEWER REQUEST 2 --------------------------------

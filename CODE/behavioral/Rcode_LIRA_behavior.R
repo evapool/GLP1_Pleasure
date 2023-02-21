@@ -440,7 +440,7 @@ plot(density(HED.trial$perceived_liking))
 
 
 #---------------------------------------------------- run baysian stat
-niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
+niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 40000 
 
 my_stanvars <- stanvar(scode = stan_funs, block = "functions")
 
@@ -776,5 +776,34 @@ hist(residuals(fmod_like))
 simulateResiduals(fittedModel=fmod_like, n=1000, plot=TRUE)
 plot(density(HED.trial$perceived_liking))
 
+
+
+
+# -------------------------- REVIEWER REQUEST 5 ----------------------------------------------------------
+# correlation between change in liking and change in weight
+
+HED.supp <- aggregate(ALL$perceived_liking, by = list(ALL$id, ALL$condition, ALL$session, ALL$intervention, ALL$BMI_diff), FUN='mean', na.rm = T) # extract means
+colnames(HED.supp) <- c('id','condition','session', 'intervention','BMI_diff','perceived_liking')
+
+HED.supp <- ddply(HED.supp, .(id), transform, liking_diff  = perceived_liking[session=="second"] - perceived_liking[session=="third"]) 
+
+HED.supp <- subset(HED.supp, session == "third")
+
+HED.choco <- subset(HED.supp, condition == "MilkShake")
+scatterplot(HED.choco$BMI_diff, HED.choco$liking_diff)
+cor.test(HED.choco$BMI_diff, HED.choco$liking_diff)
+
+HED.neutral <- subset(HED.supp, condition == "Empty")
+scatterplot(HED.neutral$BMI_diff, HED.neutral$liking_diff)
+cor.test(HED.neutral$BMI_diff, HED.neutral$liking_diff)
+
+
+mf = formula(perceived_liking ~ condition*session*intervention*BMI_diff+ (condition*session*intervention|id))
+
+#---------------------------------------------------- run frequenstistic stat
+fmod_like = lmer(mf, data = ALL, control = my_control)
+anova(fmod_like,type=2)
+summary(fmod_like)
+confint(fmod_like, level = 0.95, method = "Wald") 
 
 

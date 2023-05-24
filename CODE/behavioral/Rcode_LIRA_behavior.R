@@ -132,6 +132,7 @@ METAB2$intervention <- dplyr::recode(METAB2$intervention, "0" = "Placebo", "1" =
 
 # subset only obsese
 BEHAV = subset (BEHAV, group != "control")
+NEEDS = subset(NEEDS, group !="control")
 
 
 #keep uncentered for descriptive stats
@@ -588,8 +589,6 @@ HED.sensitivity     <- aov_car(perceived_liking_z ~ condition*session*interventi
 
 
 # The point is an important one and we can address with more baysian modeling on the effect of interest
-
-
 niter = 5000; warm = 1000; chains = 4; cores = 4; nsim = 10000 
 
 my_stanvars <- stanvar(scode = stan_funs, block = "functions")
@@ -806,4 +805,100 @@ anova(fmod_like,type=2)
 summary(fmod_like)
 confint(fmod_like, level = 0.95, method = "Wald") 
 
+# -------------------------- REVIEWER REQUEST 6 ----------------------------------------------------------
+# How do the analysis change if we enter both as co-variate huger and homa-ir ?
 
+# exclude participant that did not do two sessions
+NEEDS = subset (NEEDS, id != "201" &
+                id != "208" &
+                id != "210" &
+                id != "214" &
+                id != "214" &
+                id != "216" &
+                id != "219" &
+                id != "222" &
+                id != "223" &
+                id != "233" &
+                id != "234" &
+                id != "240" &
+                id != "245" &
+                id != "247" &
+                id != "249" &
+                id != "258" &
+                id != "263" &
+                id != "267"
+)
+
+
+# remove participant that do not have fmri data
+NEEDS = subset (NEEDS, id != "226" &
+                id != "228" &
+                id != "234" &
+                id != "242"
+)
+
+# Merge database
+HUNGER.db = aggregate(hungry ~ id+session, data = NEEDS, FUN='mean', na.rm = T) 
+
+MEDIATOR.db = join (HED.trial_request, HUNGER.db)
+
+# define statistical model
+mf = formula(perceived_liking_z ~ condition*session*intervention*saturation+ homa_ir+hungry +(condition*session*saturation|id))
+
+
+#---------------------------------------------------- run frequenstistic stat
+fmod_like = lmer(mf, data = MEDIATOR.db, control = my_control)
+anova(fmod_like,type=2)
+summary(fmod_like)
+confint(fmod_like, level = 0.95, method = "Wald") 
+
+
+bmod_like_mediation = brm(bf(perceived_liking_z ~ condition*session*intervention*saturation+ homa_ir+hungry + (condition*session|id), hu~1),
+                       family = hurdle_gaussian, 
+                       stanvars = stanvars, 
+                       data=MEDIATOR.db, 
+                       prior =  c(prior(normal(0,1), class="b", coef=""),prior(student_t(3,0,5), class="sd")),
+                       sample_prior=TRUE, 
+                       chains = 4,  
+                       iter = 2000, 
+                       warmup = 500, 
+                       seed = 123, 
+                       backend = "cmdstan", 
+                       control = list(adapt_delta = 0.99)) 
+
+full_tab_like_mediation = describe_posterior(bmod_like_simple, estimate = "median", dispersion = T,
+                                          ci = .9, ci_method = "hdi",
+                                          bf_prior = bmod_like_simple, diagnostic = "Rhat",
+                                          test = c("p_direction", "bf"))
+
+
+
+# -------------------------- REVIEWER REQUEST 7 ----------------------------------------------------------
+
+tmp = aggregate(intervention ~id, data = ALL, toString)
+
+pp.hunger.db = join (HED.means,NEEDS)
+
+# simple plot
+
+pp.hunger.db = aggregate(hungry ~ id+session+intervention, data = pp.hunger.db, FUN='mean', na.rm = T) 
+pp.hunger.db$session <- dplyr::recode(pp.hunger.db $session, "third" = "Post", "second" = "Pre" )
+
+
+hunger.pp <-  ggplot(data = pp.hunger.db, aes (x=intervention, y = hungry, fill = intervention, color = intervention)) +
+  geom_abline(slope=0, intercept=0, linetype = "dashed", color = "black") +
+  geom_point(position = position_jitterdodge(jitter.width = .9, jitter.height = 0),alpha = .7)+
+  geom_flat_violin(scale = "count", trim = FALSE, alpha = .2, aes(fill = intervention, color = NA), color = NA) +
+  geom_boxplot(alpha = 0.0) +
+  facet_wrap(~session) +
+  scale_fill_manual(values=c("Placebo"= pal[1], "Liraglutide"=pal[3]), guide = 'none') +
+  scale_color_manual(values=c("Placebo"=pal[1], "Liraglutide"=pal[3]), guide = 'none') +
+  ylim (0,100)+
+  labs( y = "Hunger level" ) +
+  theme_bw()+
+  timeline_theme
+ 
+# save plot
+pdf(file.path(figures_path,'Plot_Revisions_second_round.pdf'))
+print(hunger.pp )
+dev.off()

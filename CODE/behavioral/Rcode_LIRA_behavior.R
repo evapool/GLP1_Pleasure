@@ -759,7 +759,7 @@ HED.trial_request$perceived_liking_z = scale(HED.trial_request$perceived_liking)
 
 #---------------------------------------------------- define statstical Model
 
-mf = formula(perceived_liking_z ~ condition*session*intervention*saturation* homa_ir+ (condition*session*saturation|id))
+mf = formula(perceived_liking_z ~ condition*session*intervention*saturation+ homa_ir+ (condition*session*saturation|id))
 
 
 #---------------------------------------------------- run frequenstistic stat
@@ -902,3 +902,26 @@ hunger.pp <-  ggplot(data = pp.hunger.db, aes (x=intervention, y = hungry, fill 
 pdf(file.path(figures_path,'Plot_Revisions_second_round.pdf'))
 print(hunger.pp )
 dev.off()
+
+
+
+# -------------------------- REVIEWER REQUEST 8 ----------------------------------------------------------
+# Do you know what was the average and stdev weight loss percentage 
+# in obese participants with liraglutide treatment? 
+
+# average database with variable of interest
+df.weight.percentage <- aggregate(ALL$BW_V10, by = list(ALL$id, ALL$BW_V1, ALL$intervention), FUN='mean', na.rm = T) # extract means
+colnames(df.weight.percentage) <- c('id','BW_pre', 'intervention','BW_post')
+
+df.weight.percentage$BW_loss <- df.weight.percentage$BW_post - df.weight.percentage$BW_pre
+
+df.weight.percentage$BW_loss_pc <- 100*df.weight.percentage$BW_loss/df.weight.percentage$BW_pre 
+
+table.wl_pc <- aggregate(df.weight.percentage$BW_loss_pc, by = list(df.weight.percentage$id,df.weight.percentage$intervention), FUN='mean', na.rm = T) # extract means
+colnames(table.wl_pc) <- c('id', 'intervention','body weight loss (percentage)')
+
+table_weight_loss_percentage <- egltable(c("body weight loss (percentage)"), 
+                       g = "intervention", data = table.wl_pc, strict = FALSE) %>%
+  kbl(caption ="Change in weight loss percentage from baseline to 16-week follow-up", digits = 2) %>%
+  kable_styling(latex_options = "HOLD_position", position = "center", full_width = F) %>%
+  row_spec(0,bold=T,align='c')
